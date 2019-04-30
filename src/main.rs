@@ -330,7 +330,8 @@ fn main() {
             .as_nanos() as f64 / 1_000_000_000.0;
 
         if (ii & 0xff) == 0 {
-            print!("Found xor network #{:7} in {:10} iters | {:10.4} | {:10.1}/sec\n",
+            print!("Found xor network #{:7} in {:10} iters | \
+                {:10.4} | {:10.1}/sec\n",
                 ii, iter_id, elapsed, iter_id as f64/ elapsed);
         }
 
