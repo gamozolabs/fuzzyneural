@@ -1,5 +1,3 @@
-#![feature(duration_as_u128)]
-
 pub mod rng;
 
 use std::time::Instant;
@@ -23,7 +21,7 @@ pub enum Layer {
         biases: Vec<f32>,
     },
 
-    Relu,
+    LinStep,
 }
 
 #[derive(Debug, Clone)]
@@ -72,7 +70,7 @@ impl Network {
                     assert!(biases.len() == cur_size,
                         "Invalid number of biases");
                 }
-                Layer::Relu => {}
+                Layer::LinStep => {}
             }
         }
 
@@ -92,7 +90,7 @@ impl Network {
                     biases.push(self.rng.rand_f32(-1.0, 1.0));
                 }
             }
-            Layer::Relu => {}
+            Layer::LinStep => {}
         }
 
         // Add the layer!
@@ -115,7 +113,7 @@ impl Network {
                         biases[pick] = self.rng.rand_f32(-1.0, 1.0);
                     }
                 }
-                Layer::Relu => {}
+                Layer::LinStep => {}
             }
         }
     }
@@ -183,7 +181,7 @@ impl Network {
                             input_layer.len() == biases.len(),
                         "Did not use all biases");
                 }
-                Layer::Relu => {
+                Layer::LinStep => {
                     for &input in input_layer.iter() {
                         output_layer.push(
                             if input > 1.0 {
@@ -198,7 +196,7 @@ impl Network {
 
                     // Pedantic assert
                     assert!(output_layer.len() == input_layer.len(),
-                        "Relu layer output incorrect");
+                        "LinStep layer output incorrect");
                 }
             }
         }
@@ -217,15 +215,15 @@ fn main() {
 
     network.add_layer(Layer::Forward { size: 3, weights: Vec::new() });
     network.add_layer(Layer::Bias    { biases: Vec::new() });
-    network.add_layer(Layer::Relu);
+    network.add_layer(Layer::LinStep);
 
     network.add_layer(Layer::Forward { size: 5, weights: Vec::new() });
     network.add_layer(Layer::Bias    { biases: Vec::new() });
-    network.add_layer(Layer::Relu);
+    network.add_layer(Layer::LinStep);
 
     network.add_layer(Layer::Forward { size: 1, weights: Vec::new() });
     network.add_layer(Layer::Bias    { biases: Vec::new() });
-    network.add_layer(Layer::Relu);
+    network.add_layer(Layer::LinStep);
 
     /// Xor inputs
     const INPUT_SETS: [[f32; 2]; 4] = [
