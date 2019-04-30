@@ -1,9 +1,11 @@
 pub mod rng;
 
 use std::time::Instant;
+use std::fs::File;
+use std::io::Write;
 use crate::rng::Rng;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Layer {
     Forward {
         /// Number of hidden values at this layer
@@ -41,17 +43,21 @@ pub struct Network {
 
     /// Random number generator
     rng: Rng,
+
+    /// Scratch storage for diffs applied by the most recent mutation
+    mutate_diffs: Vec<(usize, usize, f32, f32)>,
 }
 
 impl Network {
     /// Create a new, empty, neural network. Input set size based on `size`
     pub fn new(size: usize) -> Self {
         Network {
-            layers:     Vec::new(),
-            size:       size,
-            layer_even: vec![0.; size], // initially the input layer
-            layer_odd:  Vec::new(),
-            rng:        Rng::new(),
+            layers:       Vec::new(),
+            size:         size,
+            layer_even:   vec![0.; size], // initially the input layer
+            layer_odd:    Vec::new(),
+            rng:          Rng::new(),
+            mutate_diffs: Vec::new(),
         }
     }
 
@@ -97,21 +103,28 @@ impl Network {
         self.layers.push(layer);
     }
 
-    /// Randomly mutate weights
+    /// Randomly mutate weights, returns a slice identifying the weights
+    /// which were changed.
+    /// Modification tuple is (layer_id, weight_id, prev_weight, new_weight)
     pub fn mutate_weights(&mut self) {
-        for layer in self.layers.iter_mut() {
+        // Clear the diff log
+        self.mutate_diffs.clear();
+
+        for (layer_id, layer) in self.layers.iter_mut().enumerate() {
             match layer {
                 Layer::Forward { weights, .. } => {
-                    for _ in 0..self.rng.rand() & 3 {
-                        let pick = self.rng.rand() as usize % weights.len();
-                        weights[pick] = self.rng.rand_f32(-1.0, 1.0);
-                    }
+                    let pick = self.rng.rand() as usize % weights.len();
+                    let prev = weights[pick];
+                    weights[pick] = self.rng.rand_f32(-1.0, 1.0);
+                    self.mutate_diffs
+                        .push((layer_id, pick, prev, weights[pick]));
                 }
                 Layer::Bias { biases } => {
-                    for _ in 0..self.rng.rand() & 3 {
-                        let pick = self.rng.rand() as usize % biases.len();
-                        biases[pick] = self.rng.rand_f32(-1.0, 1.0);
-                    }
+                    let pick = self.rng.rand() as usize % biases.len();
+                    let prev = biases[pick];
+                    biases[pick] = self.rng.rand_f32(-1.0, 1.0);
+                    self.mutate_diffs
+                        .push((layer_id, pick, prev, biases[pick]));
                 }
                 Layer::LinStep => {}
             }
@@ -208,9 +221,29 @@ impl Network {
             &self.layer_odd
         }
     }
+
+    /// Restore the network weights to their values prior to mutation
+    pub fn restore(&mut self) {
+        for &(layer_id, weight_id, prev, _new) in self.mutate_diffs.iter() {
+            let layer = &mut self.layers[layer_id];
+            match layer {
+                Layer::Forward { weights, .. } => {
+                    weights[weight_id] = prev;
+                }
+                Layer::Bias { biases, .. } => {
+                    biases[weight_id] = prev;
+                }
+                Layer::LinStep => {
+                    panic!("LinStep should never need to be restored");
+                }
+            }
+        }
+    }
 }
 
-fn main() {
+fn find_xor_network() -> u64 {
+    const FEEDBACK_ENABLED: bool = false;
+
     let mut network = Network::new(2);
 
     network.add_layer(Layer::Forward { size: 3, weights: Vec::new() });
@@ -236,50 +269,72 @@ fn main() {
     /// All xor results
     const EXPECTED: [f32; 4] = [-1., 1., 1., -1.];
 
+    /// Size of the training set
+    /// Can be reduced to change the size of the testing set, reducing the
+    /// amount of work required to find a fitting network
+    const TSIZE: usize = 3;
+
     // Currently known best network. Tuple is (error_rate, saved network)
     let mut best_network: (f32, Network) = (std::f32::MAX, network);
 
-    let start_time = Instant::now();
+    // Create a copy of the best network as a working copy
+    let mut network = best_network.1.clone();
+
     for iter_id in 1u64.. {
         let mut error_rate = 0f32;
 
-        // Create a copy of the best network
-        let mut network = best_network.1.clone();
-        network.rng.reseed();
+        // Modify weights randomly
         network.mutate_weights();
 
         // Go through all of our training inputs
-        for (inputs, &expected) in INPUT_SETS.iter().zip(EXPECTED.iter()) {
+        for (inputs, &expected) in INPUT_SETS[..TSIZE]
+                .iter().zip(EXPECTED[..TSIZE].iter()) {
             network.layer_even.clear();
             network.layer_even.push(inputs[0] as f32);
             network.layer_even.push(inputs[1] as f32);
 
             let result = network.forward_propagate()[0];
 
-            //print!("{:8.4?} => {:8.4} | Expected {:8.4}\n", inputs, result, expected);
-
             let error = (expected - result) * (expected - result);
             error_rate += error;
         }
-
-        //print!("ER {:8.4}\n", error_rate);
 
         // If this is the first result, or we improved the error rate, update
         // the best network
         if error_rate < best_network.0 {
             best_network = (error_rate, network.clone());
 
-            print!("Improved error rate to {}\n", error_rate);
-
             if error_rate == 0. {
-                panic!("Found perfect network");
+                // Found perfect network, return iteration count until perfect
+                // network
+                return iter_id;
+            }
+        } else {
+            if FEEDBACK_ENABLED {
+                // Restore network to the un-mutated, known-best state
+                network.restore();
             }
         }
+    }
 
-        if (iter_id & 0xffffff) == 0 {
-            let uptime = (Instant::now() - start_time).as_nanos() as f64 / 1_000_000_000.0;
-            let iters_per_sec = iter_id as f64 / uptime;
-            print!("Performance {:12.6} M/sec\n", iters_per_sec / 1000000.);
+    panic!("Could not find perfect network");
+}
+
+fn main() {
+    let mut fd = File::create("output.txt").unwrap();
+
+    for ii in 1u64.. {
+        let start = Instant::now();
+        let iter_id = find_xor_network();
+        let elapsed = (Instant::now() - start)
+            .as_nanos() as f64 / 1_000_000_000.0;
+
+        if (ii & 0xff) == 0 {
+            print!("Found xor network #{:7} in {:10} iters | {:10.4} | {:10.1}/sec\n",
+                ii, iter_id, elapsed, iter_id as f64/ elapsed);
         }
+
+        write!(fd, "{}\n", iter_id).unwrap();
+        fd.flush().unwrap();
     }
 }
