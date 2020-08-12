@@ -3,5 +3,6 @@ name = "fuzzyneural"
 version = "0.1.0"
 authors = ["Brandon Falk <bfalk@gamozolabs.com>"]
 edition = "2018"
+license = "MIT"
 
 [dependencies]
